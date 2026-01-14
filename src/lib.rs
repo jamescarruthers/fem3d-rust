@@ -473,8 +473,11 @@ mod tests {
         // X = length (450mm), Y = width (32mm), Z = thickness (24mm)
         let size = [0.450, 0.032, 0.024];
 
-        // Use more divisions along length for accuracy
-        let divisions = [18, 2, 2];
+        // Mesh divisions - linear tets need fine meshes for bending accuracy
+        // Note: Linear tetrahedra exhibit shear locking in bending, producing
+        // frequencies higher than analytical beam theory (~490 Hz for mode 1).
+        // Finer meshes or higher-order elements would improve accuracy.
+        let divisions = [30, 4, 4];
 
         let mesh = Mesh::regular_box(divisions, size);
 
@@ -490,8 +493,21 @@ mod tests {
         assert!(result.frequencies_hz.iter().all(|f| f.is_finite()), "All frequencies should be finite");
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0), "All frequencies should be positive");
 
+        // Analytical first bending frequency (Euler-Bernoulli beam theory):
+        // f1 = (4.73^2 / 2π) * sqrt(E*I / (ρ*A*L^4)) ≈ 490 Hz
+        // Linear tets will be stiffer, giving higher frequencies.
+        let first_flexible_freq = result.frequencies_hz.iter()
+            .find(|&&f| f > 1.0)
+            .copied()
+            .unwrap_or(0.0);
+
+        // With this mesh, expect first mode around 1000-1100 Hz due to tet stiffness
+        assert!(first_flexible_freq > 500.0, "First flexible mode should be above 500 Hz");
+        assert!(first_flexible_freq < 2000.0, "First flexible mode should be below 2000 Hz");
+
         // Print frequencies for debugging/verification
         println!("Sapele bar 450x32x24mm free-free mode frequencies:");
+        println!("(Note: Linear tets overestimate stiffness; analytical f1 ≈ 490 Hz)");
         for (i, freq) in result.frequencies_hz.iter().enumerate() {
             println!("  Mode {}: {:.2} Hz", i + 1, freq);
         }
