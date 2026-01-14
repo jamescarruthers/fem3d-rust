@@ -1,0 +1,19 @@
+[package]
+name = "fem3d-rust"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nalgebra = "0.33"
+nalgebra-sparse = "0.10"
+lanczos = "0.2"
+wasm-bindgen = "0.2"
+getrandom = { version = "0.2", features = ["js"] }
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
