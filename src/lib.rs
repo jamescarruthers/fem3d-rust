@@ -515,6 +515,10 @@ fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> &'s
     let idx1 = s1 * 3;
     let idx2 = s2 * 3;
 
+    if idx1 + 2 >= mode_shape_full.len() || idx2 + 2 >= mode_shape_full.len() {
+        return "vertical_bending";
+    }
+
     let psi_s1 = [mode_shape_full[idx1], mode_shape_full[idx1 + 1], mode_shape_full[idx1 + 2]];
     let psi_s2 = [mode_shape_full[idx2], mode_shape_full[idx2 + 1], mode_shape_full[idx2 + 2]];
 
