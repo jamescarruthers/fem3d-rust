@@ -426,7 +426,7 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
                 (0.0, 0.0, 1.0),
             ];
 
-            // Strain ordering matches [exx, eyy, ezz, gxy, gyz, gxz].
+            // Strain ordering (engineering shear γ = 2ε) matches [exx, eyy, ezz, gxy, gyz, gxz].
             let mut expected_b = DMatrix::<f64>::zeros(6, 12);
             for (i, (gx, gy, gz)) in grads.iter().copied().enumerate() {
                 let col = i * 3;
@@ -450,7 +450,8 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
             let max_err = ke
                 .iter()
                 .zip(expected_ke.iter())
-                .fold(0.0f64, |acc, (a, b)| acc.max((a - b).abs()));
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f64, f64::max);
             assert!(max_err < 1e-10, "max_err was {}", max_err);
         }
     }
