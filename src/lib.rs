@@ -394,65 +394,65 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
 }
 
 #[cfg(test)]
-    mod tests {
-        use super::*;
+mod tests {
+    use super::*;
 
-        #[test]
-        fn demo_returns_positive_modes() {
-            let result = demo_modes();
-            assert!(!result.frequencies_hz.is_empty());
-            assert!(result.frequencies_hz[0].is_finite());
-            assert!(result.frequencies_hz.iter().all(|f| *f > 0.0));
-        }
-
-        #[test]
-        fn element_stiffness_matches_constitutive_order() {
-            let material = Material {
-                young_modulus: 1.0,
-                poisson_ratio: 0.25,
-                density: 1.0,
-            };
-
-            let nodes = [
-                Point3::new(0.0, 0.0, 0.0),
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(0.0, 1.0, 0.0),
-                Point3::new(0.0, 0.0, 1.0),
-            ];
-
-            let grads = [
-                (-1.0, -1.0, -1.0),
-                (1.0, 0.0, 0.0),
-                (0.0, 1.0, 0.0),
-                (0.0, 0.0, 1.0),
-            ];
-
-            // Strain ordering (engineering shear γ = 2ε) matches [exx, eyy, ezz, gxy, gyz, gxz].
-            let mut expected_b = DMatrix::<f64>::zeros(6, 12);
-            for (i, (gx, gy, gz)) in grads.iter().copied().enumerate() {
-                let col = i * 3;
-                expected_b[(0, col)] = gx;
-                expected_b[(1, col + 1)] = gy;
-                expected_b[(2, col + 2)] = gz;
-                expected_b[(3, col)] = gy;
-                expected_b[(3, col + 1)] = gx;
-                expected_b[(4, col + 1)] = gz;
-                expected_b[(4, col + 2)] = gy;
-                expected_b[(5, col)] = gz;
-                expected_b[(5, col + 2)] = gx;
-            }
-
-            let expected_volume = 1.0 / 6.0;
-            let expected_ke = expected_b.transpose() * constitutive_matrix(&material) * expected_b * expected_volume;
-
-            let (volume, ke) = element_stiffness(&nodes, &material);
-            assert!((volume - expected_volume).abs() < 1e-12);
-
-            let max_err = ke
-                .iter()
-                .zip(expected_ke.iter())
-                .map(|(a, b)| (a - b).abs())
-                .fold(0.0f64, f64::max);
-            assert!(max_err < 1e-10, "max_err was {}", max_err);
-        }
+    #[test]
+    fn demo_returns_positive_modes() {
+        let result = demo_modes();
+        assert!(!result.frequencies_hz.is_empty());
+        assert!(result.frequencies_hz[0].is_finite());
+        assert!(result.frequencies_hz.iter().all(|f| *f > 0.0));
     }
+
+    #[test]
+    fn element_stiffness_matches_constitutive_order() {
+        let material = Material {
+            young_modulus: 1.0,
+            poisson_ratio: 0.25,
+            density: 1.0,
+        };
+
+        let nodes = [
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+        ];
+
+        let grads = [
+            (-1.0, -1.0, -1.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ];
+
+        // Strain ordering (engineering shear γ = 2ε) matches [exx, eyy, ezz, gxy, gyz, gxz].
+        let mut expected_b = DMatrix::<f64>::zeros(6, 12);
+        for (i, (gx, gy, gz)) in grads.iter().copied().enumerate() {
+            let col = i * 3;
+            expected_b[(0, col)] = gx;
+            expected_b[(1, col + 1)] = gy;
+            expected_b[(2, col + 2)] = gz;
+            expected_b[(3, col)] = gy;
+            expected_b[(3, col + 1)] = gx;
+            expected_b[(4, col + 1)] = gz;
+            expected_b[(4, col + 2)] = gy;
+            expected_b[(5, col)] = gz;
+            expected_b[(5, col + 2)] = gx;
+        }
+
+        let expected_volume = 1.0 / 6.0;
+        let expected_ke = expected_b.transpose() * constitutive_matrix(&material) * expected_b * expected_volume;
+
+        let (volume, ke) = element_stiffness(&nodes, &material);
+        assert!((volume - expected_volume).abs() < 1e-12);
+
+        let max_err = ke
+            .iter()
+            .zip(expected_ke.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
+        assert!(max_err < 1e-10, "max_err was {}", max_err);
+    }
+}
