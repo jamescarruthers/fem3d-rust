@@ -426,6 +426,7 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
                 (0.0, 0.0, 1.0),
             ];
 
+            // Strain ordering matches [εxx, εyy, εzz, γxy, γyz, γxz].
             let mut expected_b = DMatrix::<f64>::zeros(6, 12);
             for (i, (gx, gy, gz)) in grads.iter().copied().enumerate() {
                 let col = i * 3;
