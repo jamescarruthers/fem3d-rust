@@ -848,4 +848,67 @@ mod tests {
             println!("  Mode {}: {:.2} Hz", i + 1, freq);
         }
     }
+
+    #[test]
+    fn sapele_bar_450x32x24_opposing_corners_constrained() {
+        // Sapele wood material properties (from Soares 2021 / wood-database.com)
+        let material = Material {
+            young_modulus: 12.35e9,  // 12.35 GPa along grain
+            poisson_ratio: 0.35,
+            density: 665.0,          // kg/m³
+        };
+
+        // Bar dimensions: 450mm x 32mm x 24mm (converted to meters)
+        let size = [0.450, 0.032, 0.024];
+
+        // TET10 mesh
+        let divisions = [18, 2, 2];
+        let mesh = Tet10Mesh::regular_box(divisions, size);
+
+        // Constrain opposing corners as described in Soares 2021
+        // Corner 1: (0, 0, 0)
+        // Opposing corner: (0.45, 0.032, 0.024)
+        let mut fixed = HashSet::new();
+        let tol = 1e-9;
+
+        for (idx, node) in mesh.nodes.iter().enumerate() {
+            // Check for corner at origin (0, 0, 0)
+            if node.x.abs() < tol && node.y.abs() < tol && node.z.abs() < tol {
+                fixed.insert(idx);
+                println!("Fixed node {} at origin: ({:.4}, {:.4}, {:.4})", idx, node.x, node.y, node.z);
+            }
+            // Check for opposing corner at (0.45, 0.032, 0.024)
+            if (node.x - size[0]).abs() < tol
+                && (node.y - size[1]).abs() < tol
+                && (node.z - size[2]).abs() < tol {
+                fixed.insert(idx);
+                println!("Fixed node {} at far corner: ({:.4}, {:.4}, {:.4})", idx, node.x, node.y, node.z);
+            }
+        }
+
+        assert_eq!(fixed.len(), 2, "Should have exactly 2 fixed nodes (opposing corners)");
+
+        let model = assemble_tet10_model(&mesh, &material, &fixed);
+        let result = solve_modes(&model, 6);
+
+        assert!(!result.frequencies_hz.is_empty(), "Should have flexible modes");
+        assert!(result.frequencies_hz.iter().all(|f| f.is_finite()), "All frequencies should be finite");
+
+        // With opposing corners fixed, there's one remaining rotational DOF about the diagonal
+        // axis, giving one near-zero frequency. The first bending mode follows.
+        let first_flexible_freq = result.frequencies_hz.iter()
+            .find(|&&f| f > 10.0)  // Skip near-rigid modes
+            .copied()
+            .unwrap_or(0.0);
+
+        println!("Sapele bar 450x32x24mm with opposing corners constrained (TET10):");
+        println!("(Boundary condition: opposing corners fixed - first bending ~384 Hz)");
+        for (i, freq) in result.frequencies_hz.iter().enumerate() {
+            println!("  Mode {}: {:.2} Hz", i + 1, freq);
+        }
+
+        // First bending mode should be close to expected ~400 Hz
+        assert!(first_flexible_freq > 300.0, "First bending mode should be above 300 Hz");
+        assert!(first_flexible_freq < 500.0, "First bending mode should be below 500 Hz");
+    }
 }
