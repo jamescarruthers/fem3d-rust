@@ -439,14 +439,15 @@ fn expand_mode_shape(
     let mut full = DVector::<f64>::zeros(total_dofs);
     for (global_idx, mapped) in dof_map.iter().enumerate() {
         if let Some(free_idx) = mapped {
-            debug_assert!(
-                *free_idx < shape.len(),
-                "free dof {} out of bounds for shape len {}",
-                free_idx,
-                shape.len()
-            );
             if *free_idx < shape.len() {
                 full[global_idx] = shape[*free_idx];
+            } else {
+                debug_assert!(
+                    false,
+                    "free dof {} out of bounds for shape len {}",
+                    free_idx,
+                    shape.len()
+                );
             }
         }
     }
@@ -551,7 +552,8 @@ fn classify_modes(
         let entry = ModeFamilyEntry {
             frequency_hz: *freq,
             mode_index,
-            mode_number: usize::MAX,
+            // mode_number assigned after sorting within family
+            mode_number: 0,
         };
 
         match mode_type {
@@ -568,7 +570,11 @@ fn classify_modes(
         &mut classification.lateral,
         &mut classification.axial,
     ] {
-        family.sort_by(|a, b| a.frequency_hz.partial_cmp(&b.frequency_hz).unwrap());
+        family.sort_by(|a, b| {
+            a.frequency_hz
+                .partial_cmp(&b.frequency_hz)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         for (i, entry) in family.iter_mut().enumerate() {
             entry.mode_number = i + 1;
         }
