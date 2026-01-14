@@ -125,7 +125,7 @@ impl Mesh {
                     let n6 = idx(i, j + 1, k + 1);
                     let n7 = idx(i + 1, j + 1, k + 1);
 
-                    // Five-tetra subdivision of a hexahedron
+                    // Five-tetra subdivision of a cube
                     elements.push([n0, n1, n3, n7]);
                     elements.push([n0, n3, n2, n7]);
                     elements.push([n0, n2, n6, n7]);
