@@ -469,20 +469,25 @@ mod tests {
     fn sapele_wood_bar_450x32x24() {
         // Create a mesh for a sapele wood bar with dimensions 450x32x24 mm (0.45x0.032x0.024 m)
         // Using moderate mesh resolution for reasonable computation time
+        const LENGTH: f64 = 0.45; // length in meters
+        const WIDTH: f64 = 0.032;  // width in meters
+        const HEIGHT: f64 = 0.024; // height in meters
+        
         let mesh = Mesh::regular_bar(
             18,  // divisions along length (450mm)
             3,   // divisions along width (32mm)
             2,   // divisions along height (24mm)
-            0.45, // length in meters
-            0.032, // width in meters
-            0.024, // height in meters
+            LENGTH,
+            WIDTH,
+            HEIGHT,
         );
 
-        // Fix both ends of the bar (pinned/fixed-fixed boundary condition)
-        // Fix all nodes where x is approximately 0 or x is approximately length (both ends)
+        // Fix both ends of the bar (fixed-fixed boundary condition)
+        // Fix all nodes where x is approximately 0 or x is approximately the length (both ends)
+        // Note: This fixes all DOFs (translation and rotation) at both ends
         let mut fixed = HashSet::new();
         for (idx, node) in mesh.nodes.iter().enumerate() {
-            if node.x <= f64::EPSILON || (node.x - 0.45).abs() <= f64::EPSILON {
+            if node.x <= f64::EPSILON || (node.x - LENGTH).abs() <= f64::EPSILON {
                 fixed.insert(idx);
             }
         }
@@ -507,7 +512,7 @@ mod tests {
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0), "All frequencies should be positive");
         
         // Print the frequencies for reference
-        println!("Sapele wood bar (450x32x24 mm) modal frequencies (pinned at both ends):");
+        println!("Sapele wood bar (450x32x24 mm) modal frequencies (fixed at both ends):");
         for (i, freq) in result.frequencies_hz.iter().enumerate() {
             println!("  Mode {}: {:.2} Hz", i + 1, freq);
         }
