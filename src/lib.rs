@@ -183,6 +183,7 @@ fn element_stiffness(nodes: &[Point3<f64>; 4], material: &Material) -> (f64, DMa
         (inv[(1, 3)], inv[(2, 3)], inv[(3, 3)]),
     ];
 
+    // Strain order uses engineering shear: [exx, eyy, ezz, gxy, gyz, gxz].
     let mut b = DMatrix::<f64>::zeros(6, 12);
     for (i, (gx, gy, gz)) in grads.iter().enumerate() {
         let col = i * 3;
