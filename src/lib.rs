@@ -46,7 +46,7 @@ pub struct ModeClassification {
 pub struct ModeFamilyEntry {
     pub frequency_hz: f64,
     pub mode_index: usize,
-    pub mode_number: usize,
+    pub mode_number: Option<usize>,
 }
 
 impl Mesh {
@@ -453,11 +453,13 @@ fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
     }
 
     let tol = 1e-6;
-    let x_min = nodes
+    let Some(x_min) = nodes
         .iter()
         .map(|p| p.x)
         .min_by(|a, b| a.total_cmp(b))
-        .unwrap_or(f64::INFINITY);
+    else {
+        return None;
+    };
     let end_nodes: Vec<usize> = nodes
         .iter()
         .enumerate()
@@ -469,11 +471,13 @@ fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
         return None;
     }
 
-    let z_max = end_nodes
+    let Some(z_max) = end_nodes
         .iter()
         .map(|&i| nodes[i].z)
         .max_by(|a, b| a.total_cmp(b))
-        .unwrap_or(f64::NEG_INFINITY);
+    else {
+        return None;
+    };
     let top_nodes: Vec<usize> = end_nodes
         .iter()
         .copied()
@@ -500,13 +504,13 @@ fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
     Some((s1, s2))
 }
 
-fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> &'static str {
+fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> Option<&'static str> {
     let (s1, s2) = corners;
     let idx1 = s1 * 3;
     let idx2 = s2 * 3;
 
     if idx1 + 2 >= mode_shape_full.len() || idx2 + 2 >= mode_shape_full.len() {
-        return "vertical_bending";
+        return None;
     }
 
     let psi_s1 = [mode_shape_full[idx1], mode_shape_full[idx1 + 1], mode_shape_full[idx1 + 2]];
@@ -524,7 +528,7 @@ fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> &'s
         .map(|(i, _)| i)
         .unwrap_or(2);
 
-    match max_dir {
+    let kind = match max_dir {
         1 => "lateral",
         0 => "axial",
         _ => {
@@ -534,7 +538,9 @@ fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> &'s
                 "torsional"
             }
         }
-    }
+    };
+
+    Some(kind)
 }
 
 fn classify_modes(
@@ -551,12 +557,13 @@ fn classify_modes(
     let total_dofs = mesh.nodes.len() * 3;
     for (mode_index, (freq, shape_free)) in frequencies.iter().zip(shapes.iter()).enumerate() {
         let shape_full = expand_mode_shape(shape_free, dof_map, total_dofs);
-        let mode_type = classify_mode(&shape_full, corners);
+        let Some(mode_type) = classify_mode(&shape_full, corners) else {
+            continue;
+        };
         let entry = ModeFamilyEntry {
             frequency_hz: *freq,
             mode_index,
-            // mode_number assigned after sorting within family
-            mode_number: 0,
+            mode_number: None,
         };
 
         match mode_type {
@@ -577,7 +584,7 @@ fn classify_modes(
             a.frequency_hz.total_cmp(&b.frequency_hz)
         });
         for (i, entry) in family.iter_mut().enumerate() {
-            entry.mode_number = i + 1;
+            entry.mode_number = Some(i + 1);
         }
     }
 
