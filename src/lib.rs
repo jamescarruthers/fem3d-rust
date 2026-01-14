@@ -298,7 +298,10 @@ pub fn solve_modes(model: &AssembledModel, mesh: &Mesh, modes: usize) -> ModeSum
     }
 
     for (idx, lambda) in eigen.eigenvalues.iter().copied().enumerate() {
-        if lambda <= RIGID_MODE_TOL || mode_shapes.len() >= modes {
+        if mode_shapes.len() >= modes {
+            break;
+        }
+        if lambda <= RIGID_MODE_TOL {
             continue;
         }
         let vec = eigen.eigenvectors.column(idx).into_owned();
@@ -436,6 +439,12 @@ fn expand_mode_shape(
     let mut full = DVector::<f64>::zeros(total_dofs);
     for (global_idx, mapped) in dof_map.iter().enumerate() {
         if let Some(free_idx) = mapped {
+            debug_assert!(
+                *free_idx < shape.len(),
+                "free dof {} out of bounds for shape len {}",
+                free_idx,
+                shape.len()
+            );
             if *free_idx < shape.len() {
                 full[global_idx] = shape[*free_idx];
             }
@@ -542,7 +551,7 @@ fn classify_modes(
         let entry = ModeFamilyEntry {
             frequency_hz: *freq,
             mode_index,
-            mode_number: 0,
+            mode_number: usize::MAX,
         };
 
         match mode_type {
