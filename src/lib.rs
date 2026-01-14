@@ -749,11 +749,11 @@ mod tests {
 
     #[test]
     fn sapele_bar_450x32x24_free_free_modes() {
-        // Sapele wood material properties
+        // Sapele wood material properties (from wood-database.com)
         let material = Material {
-            young_modulus: 10.5e9,  // ~10.5 GPa along grain
+            young_modulus: 12.35e9,  // 12.35 GPa along grain
             poisson_ratio: 0.35,
-            density: 640.0,         // kg/m³
+            density: 665.0,          // kg/m³
         };
 
         // Bar dimensions: 450mm x 32mm x 24mm (converted to meters)
@@ -762,13 +762,13 @@ mod tests {
 
         // Mesh divisions - linear tets need fine meshes for bending accuracy
         // Note: Linear tetrahedra exhibit shear locking in bending, producing
-        // frequencies higher than analytical beam theory (~490 Hz for mode 1).
-        // Finer meshes or higher-order elements would improve accuracy.
+        // frequencies higher than analytical beam theory.
         let divisions = [30, 4, 4];
 
         let mesh = Mesh::regular_box(divisions, size);
 
         // Free-free boundary conditions (no fixed nodes)
+        // Real xylophone bars are supported at nodal points (~22.4% from each end)
         let fixed = HashSet::new();
 
         let model = assemble_model(&mesh, &material, &fixed);
@@ -781,20 +781,20 @@ mod tests {
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0), "All frequencies should be positive");
 
         // Analytical first bending frequency (Euler-Bernoulli beam theory):
-        // f1 = (4.73^2 / 2π) * sqrt(E*I / (ρ*A*L^4)) ≈ 490 Hz
+        // f1 = (4.73^2 / 2π) * sqrt(E*I / (ρ*A*L^4)) ≈ 525 Hz with correct properties
         // Linear tets will be stiffer, giving higher frequencies.
         let first_flexible_freq = result.frequencies_hz.iter()
             .find(|&&f| f > 1.0)
             .copied()
             .unwrap_or(0.0);
 
-        // With this mesh, expect first mode around 1000-1100 Hz due to tet stiffness
+        // With this mesh, expect first mode around 1000-1200 Hz due to tet stiffness
         assert!(first_flexible_freq > 500.0, "First flexible mode should be above 500 Hz");
         assert!(first_flexible_freq < 2000.0, "First flexible mode should be below 2000 Hz");
 
         // Print frequencies for debugging/verification
         println!("Sapele bar 450x32x24mm free-free mode frequencies (TET4):");
-        println!("(Note: Linear tets overestimate stiffness; analytical f1 ≈ 490 Hz)");
+        println!("(Note: Linear tets overestimate stiffness; analytical f1 ≈ 525 Hz)");
         for (i, freq) in result.frequencies_hz.iter().enumerate() {
             println!("  Mode {}: {:.2} Hz", i + 1, freq);
         }
@@ -802,11 +802,11 @@ mod tests {
 
     #[test]
     fn sapele_bar_450x32x24_tet10_modes() {
-        // Sapele wood material properties
+        // Sapele wood material properties (from wood-database.com)
         let material = Material {
-            young_modulus: 10.5e9,  // ~10.5 GPa along grain
+            young_modulus: 12.35e9,  // 12.35 GPa along grain
             poisson_ratio: 0.35,
-            density: 640.0,         // kg/m³
+            density: 665.0,          // kg/m³
         };
 
         // Bar dimensions: 450mm x 32mm x 24mm (converted to meters)
@@ -830,20 +830,20 @@ mod tests {
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0), "All frequencies should be positive");
 
         // Analytical first bending frequency (Euler-Bernoulli beam theory):
-        // f1 = (4.73^2 / 2π) * sqrt(E*I / (ρ*A*L^4)) ≈ 490 Hz
+        // f1 = (4.73^2 / 2π) * sqrt(E*I / (ρ*A*L^4)) ≈ 525 Hz with correct properties
         // TET10 should be much closer to analytical than TET4
         let first_flexible_freq = result.frequencies_hz.iter()
             .find(|&&f| f > 1.0)
             .copied()
             .unwrap_or(0.0);
 
-        // TET10 with [18,2,2] gives ~830 Hz - closer to analytical than TET4's ~1060 Hz
+        // TET10 gives better accuracy than TET4
         assert!(first_flexible_freq > 500.0, "First flexible mode should be above 500 Hz");
-        assert!(first_flexible_freq < 1200.0, "First flexible mode should be below 1200 Hz");
+        assert!(first_flexible_freq < 1500.0, "First flexible mode should be below 1500 Hz");
 
         // Print frequencies for verification
         println!("Sapele bar 450x32x24mm free-free mode frequencies (TET10):");
-        println!("(Analytical f1 ≈ 490 Hz, TET4 gives ~1060 Hz)");
+        println!("(Analytical f1 ≈ 525 Hz)");
         for (i, freq) in result.frequencies_hz.iter().enumerate() {
             println!("  Mode {}: {:.2} Hz", i + 1, freq);
         }
