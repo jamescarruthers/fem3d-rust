@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FEM3D WASM Demo</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #0f172a; background: #f8fafc; }
+    body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+    header { margin-bottom: 1rem; }
+    button { background: #2563eb; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    pre { background: #0b1623; color: #e2e8f0; padding: 0.75rem; border-radius: 8px; overflow-x: auto; }
+    .card { background: #fff; padding: 1rem; border-radius: 10px; box-shadow: 0 6px 24px rgba(15, 23, 42, 0.1); margin-top: 1rem; }
+    .status { font-size: 0.9rem; color: #475569; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FEM3D Rust → WASM</h1>
+    <p>Lightweight 3D modal analysis using nalgebra + nalgebra-sparse + lanczos (lumped mass + scaled operator).</p>
+  </header>
+
+  <div class="card">
+    <h2>Demo cube (base fixed)</h2>
+    <p>Click run to assemble a small tetrahedral cube mesh in WASM and extract the lowest frequencies.</p>
+    <button id="run">Run demo</button>
+    <div id="status" class="status">Waiting to run…</div>
+    <pre id="output">[]</pre>
+  </div>
+
+  <script type="module">
+    import init, { compute_demo_modes } from './pkg/fem3d_rust.js';
+
+    const statusEl = document.getElementById('status');
+    const outputEl = document.getElementById('output');
+    const runBtn = document.getElementById('run');
+
+    async function run() {
+      runBtn.disabled = true;
+      statusEl.textContent = 'Loading WASM…';
+      try {
+        await init();
+        statusEl.textContent = 'Running solver…';
+        const result = compute_demo_modes();
+        const frequencies = result.frequencies_hz || [];
+        outputEl.textContent = JSON.stringify(frequencies, null, 2);
+        statusEl.textContent = `Done. Modes returned: ${frequencies.length}`;
+      } catch (err) {
+        statusEl.textContent = 'Error running solver';
+        outputEl.textContent = String(err);
+        console.error(err);
+      } finally {
+        runBtn.disabled = false;
+      }
+    }
+
+    runBtn.addEventListener('click', run);
+  </script>
+</body>
+</html>
