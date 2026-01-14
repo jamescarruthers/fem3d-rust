@@ -439,15 +439,14 @@ fn expand_mode_shape(
     let mut full = DVector::<f64>::zeros(total_dofs);
     for (global_idx, mapped) in dof_map.iter().enumerate() {
         if let Some(free_idx) = mapped {
+            debug_assert!(
+                *free_idx < shape.len(),
+                "free dof {} out of bounds for shape len {}",
+                free_idx,
+                shape.len()
+            );
             if *free_idx < shape.len() {
                 full[global_idx] = shape[*free_idx];
-            } else {
-                debug_assert!(
-                    false,
-                    "free dof {} out of bounds for shape len {}",
-                    free_idx,
-                    shape.len()
-                );
             }
         }
     }
@@ -491,11 +490,21 @@ fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
 
     let s1 = *top_nodes
         .iter()
-        .max_by(|a, b| nodes[**a].y.partial_cmp(&nodes[**b].y).unwrap())
+        .max_by(|a, b| {
+            nodes[**a]
+                .y
+                .partial_cmp(&nodes[**b].y)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .unwrap();
     let s2 = *top_nodes
         .iter()
-        .min_by(|a, b| nodes[**a].y.partial_cmp(&nodes[**b].y).unwrap())
+        .min_by(|a, b| {
+            nodes[**a]
+                .y
+                .partial_cmp(&nodes[**b].y)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .unwrap();
 
     Some((s1, s2))
@@ -517,7 +526,7 @@ fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> &'s
     let max_dir = abs_psi
         .iter()
         .enumerate()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(i, _)| i)
         .unwrap_or(2);
 
