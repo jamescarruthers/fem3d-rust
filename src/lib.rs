@@ -851,11 +851,11 @@ mod tests {
 
     #[test]
     fn sapele_bar_450x32x24_opposing_corners_constrained() {
-        // Sapele wood material properties (from Soares 2021 / wood-database.com)
+        // Sapele wood material properties
         let material = Material {
-            young_modulus: 12.35e9,  // 12.35 GPa along grain
+            young_modulus: 12.0e9,   // 12 GPa
             poisson_ratio: 0.35,
-            density: 665.0,          // kg/m³
+            density: 640.0,          // kg/m³
         };
 
         // Bar dimensions: 450mm x 32mm x 24mm (converted to meters)
@@ -916,9 +916,9 @@ mod tests {
     fn sapele_bar_551x32x24_opposing_corners_constrained() {
         // Sapele wood material properties
         let material = Material {
-            young_modulus: 12.35e9,  // 12.35 GPa along grain
+            young_modulus: 12.0e9,   // 12 GPa
             poisson_ratio: 0.35,
-            density: 665.0,          // kg/m³
+            density: 640.0,          // kg/m³
         };
 
         // Bar dimensions: 551mm x 32mm x 24mm (converted to meters)
