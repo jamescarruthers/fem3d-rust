@@ -426,7 +426,7 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
                 (0.0, 0.0, 1.0),
             ];
 
-            // Strain ordering matches [εxx, εyy, εzz, γxy, γyz, γxz].
+            // Strain ordering matches [exx, eyy, ezz, gxy, gyz, gxz].
             let mut expected_b = DMatrix::<f64>::zeros(6, 12);
             for (i, (gx, gy, gz)) in grads.iter().copied().enumerate() {
                 let col = i * 3;
@@ -447,9 +447,10 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
             let (volume, ke) = element_stiffness(&nodes, &material);
             assert!((volume - expected_volume).abs() < 1e-12);
 
-            let max_err = (&ke - &expected_ke)
+            let max_err = ke
                 .iter()
-                .fold(0.0f64, |acc, v| acc.max(v.abs()));
+                .zip(expected_ke.iter())
+                .fold(0.0f64, |acc, (a, b)| acc.max((a - b).abs()));
             assert!(max_err < 1e-10, "max_err was {}", max_err);
         }
     }
