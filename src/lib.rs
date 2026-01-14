@@ -478,11 +478,11 @@ mod tests {
             0.024, // height in meters
         );
 
-        // Fix one end of the bar (cantilever boundary condition)
-        // Fix all nodes where x is approximately 0 (one end of the bar)
+        // Fix both ends of the bar (pinned/fixed-fixed boundary condition)
+        // Fix all nodes where x is approximately 0 or x is approximately length (both ends)
         let mut fixed = HashSet::new();
         for (idx, node) in mesh.nodes.iter().enumerate() {
-            if node.x <= f64::EPSILON {
+            if node.x <= f64::EPSILON || (node.x - 0.45).abs() <= f64::EPSILON {
                 fixed.insert(idx);
             }
         }
@@ -507,7 +507,7 @@ mod tests {
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0), "All frequencies should be positive");
         
         // Print the frequencies for reference
-        println!("Sapele wood bar (450x32x24 mm) modal frequencies:");
+        println!("Sapele wood bar (450x32x24 mm) modal frequencies (pinned at both ends):");
         for (i, freq) in result.frequencies_hz.iter().enumerate() {
             println!("  Mode {}: {:.2} Hz", i + 1, freq);
         }
