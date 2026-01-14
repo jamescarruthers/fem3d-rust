@@ -25,11 +25,28 @@ pub struct Mesh {
 pub struct AssembledModel {
     pub stiffness: CsrMatrix<f64>,
     pub mass_diag: Vec<f64>,
+    pub dof_map: Vec<Option<usize>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModeSummary {
     pub frequencies_hz: Vec<f64>,
+    pub classification: ModeClassification,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct ModeClassification {
+    pub vertical_bending: Vec<ModeFamilyEntry>,
+    pub torsional: Vec<ModeFamilyEntry>,
+    pub lateral: Vec<ModeFamilyEntry>,
+    pub axial: Vec<ModeFamilyEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ModeFamilyEntry {
+    pub frequency_hz: f64,
+    pub mode_index: usize,
+    pub mode_number: usize,
 }
 
 impl Mesh {
@@ -142,7 +159,11 @@ pub fn assemble_model(mesh: &Mesh, material: &Material, fixed_nodes: &HashSet<us
 
     let stiffness = CsrMatrix::from(&coo);
 
-    AssembledModel { stiffness, mass_diag }
+    AssembledModel {
+        stiffness,
+        mass_diag,
+        dof_map,
+    }
 }
 
 fn element_stiffness(nodes: &[Point3<f64>; 4], material: &Material) -> (f64, DMatrix<f64>) {
@@ -257,13 +278,14 @@ fn constitutive_matrix(material: &Material) -> DMatrix<f64> {
     )
 }
 
-pub fn solve_modes(model: &AssembledModel, modes: usize) -> ModeSummary {
+pub fn solve_modes(model: &AssembledModel, mesh: &Mesh, modes: usize) -> ModeSummary {
     let op = MassScaledOperator::new(&model.stiffness, &model.mass_diag);
     let dim = op.ncols().max(1);
     let iterations = dim.min(dim.max(modes * 2 + 4));
     let eigen = op.eigsh(iterations, Order::Smallest);
 
     let mut frequencies_hz = Vec::new();
+    let mut mode_shapes = Vec::new();
     for lambda in eigen.eigenvalues.iter().copied() {
         if lambda <= RIGID_MODE_TOL {
             continue;
@@ -275,7 +297,20 @@ pub fn solve_modes(model: &AssembledModel, modes: usize) -> ModeSummary {
         frequencies_hz.push(freq);
     }
 
-    ModeSummary { frequencies_hz }
+    for (idx, lambda) in eigen.eigenvalues.iter().copied().enumerate() {
+        if lambda <= RIGID_MODE_TOL || mode_shapes.len() >= modes {
+            continue;
+        }
+        let vec = eigen.eigenvectors.column(idx).into_owned();
+        mode_shapes.push(vec);
+    }
+
+    let classification = classify_modes(mesh, &model.dof_map, &frequencies_hz, &mode_shapes);
+
+    ModeSummary {
+        frequencies_hz,
+        classification,
+    }
 }
 
 pub fn demo_modes() -> ModeSummary {
@@ -294,7 +329,7 @@ pub fn demo_modes() -> ModeSummary {
     };
 
     let model = assemble_model(&mesh, &material, &fixed);
-    solve_modes(&model, 6)
+    solve_modes(&model, &mesh, 6)
 }
 
 #[wasm_bindgen]
@@ -343,7 +378,7 @@ pub fn compute_modes(
         return Err(JsValue::from_str("no free degrees of freedom after applying constraints"));
     }
 
-    let summary = solve_modes(&model, modes.max(1));
+    let summary = solve_modes(&model, &mesh, modes.max(1));
     serde_wasm_bindgen::to_value(&summary).map_err(to_js_error)
 }
 
@@ -393,6 +428,146 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
     }
 }
 
+fn expand_mode_shape(
+    shape: &DVector<f64>,
+    dof_map: &[Option<usize>],
+    total_dofs: usize,
+) -> DVector<f64> {
+    let mut full = DVector::<f64>::zeros(total_dofs);
+    for (global_idx, mapped) in dof_map.iter().enumerate() {
+        if let Some(free_idx) = mapped {
+            if *free_idx < shape.len() {
+                full[global_idx] = shape[*free_idx];
+            }
+        }
+    }
+    full
+}
+
+fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
+    if nodes.is_empty() {
+        return None;
+    }
+
+    let tol = 1e-6;
+    let x_min = nodes
+        .iter()
+        .map(|p| p.x)
+        .fold(f64::INFINITY, |a, b| a.min(b));
+    let end_nodes: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| (p.x - x_min).abs() < tol)
+        .map(|(i, _)| i)
+        .collect();
+
+    if end_nodes.is_empty() {
+        return None;
+    }
+
+    let z_max = end_nodes
+        .iter()
+        .map(|&i| nodes[i].z)
+        .fold(f64::NEG_INFINITY, |a, b| a.max(b));
+    let top_nodes: Vec<usize> = end_nodes
+        .iter()
+        .copied()
+        .filter(|&i| (nodes[i].z - z_max).abs() < tol)
+        .collect();
+
+    if top_nodes.len() < 2 {
+        return None;
+    }
+
+    let s1 = *top_nodes
+        .iter()
+        .max_by(|a, b| nodes[**a].y.partial_cmp(&nodes[**b].y).unwrap())
+        .unwrap();
+    let s2 = *top_nodes
+        .iter()
+        .min_by(|a, b| nodes[**a].y.partial_cmp(&nodes[**b].y).unwrap())
+        .unwrap();
+
+    Some((s1, s2))
+}
+
+fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> &'static str {
+    let (s1, s2) = corners;
+    let idx1 = s1 * 3;
+    let idx2 = s2 * 3;
+
+    let psi_s1 = [mode_shape_full[idx1], mode_shape_full[idx1 + 1], mode_shape_full[idx1 + 2]];
+    let psi_s2 = [mode_shape_full[idx2], mode_shape_full[idx2 + 1], mode_shape_full[idx2 + 2]];
+
+    let abs_psi = [
+        psi_s1[0].abs(),
+        psi_s1[1].abs(),
+        psi_s1[2].abs(),
+    ];
+    let max_dir = abs_psi
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .map(|(i, _)| i)
+        .unwrap_or(2);
+
+    match max_dir {
+        1 => "lateral",
+        0 => "axial",
+        _ => {
+            if psi_s1[2].signum() == psi_s2[2].signum() {
+                "vertical_bending"
+            } else {
+                "torsional"
+            }
+        }
+    }
+}
+
+fn classify_modes(
+    mesh: &Mesh,
+    dof_map: &[Option<usize>],
+    frequencies: &[f64],
+    shapes: &[DVector<f64>],
+) -> ModeClassification {
+    let mut classification = ModeClassification::default();
+    let Some(corners) = find_corner_nodes(&mesh.nodes) else {
+        return classification;
+    };
+
+    let total_dofs = mesh.nodes.len() * 3;
+    for (mode_index, (freq, shape_free)) in frequencies.iter().zip(shapes.iter()).enumerate() {
+        let shape_full = expand_mode_shape(shape_free, dof_map, total_dofs);
+        let mode_type = classify_mode(&shape_full, corners);
+        let entry = ModeFamilyEntry {
+            frequency_hz: *freq,
+            mode_index,
+            mode_number: 0,
+        };
+
+        match mode_type {
+            "vertical_bending" => classification.vertical_bending.push(entry),
+            "torsional" => classification.torsional.push(entry),
+            "lateral" => classification.lateral.push(entry),
+            _ => classification.axial.push(entry),
+        }
+    }
+
+    for family in [
+        &mut classification.vertical_bending,
+        &mut classification.torsional,
+        &mut classification.lateral,
+        &mut classification.axial,
+    ] {
+        family.sort_by(|a, b| a.frequency_hz.partial_cmp(&b.frequency_hz).unwrap());
+        for (i, entry) in family.iter_mut().enumerate() {
+            entry.mode_number = i + 1;
+        }
+    }
+
+    classification
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +578,14 @@ mod tests {
         assert!(!result.frequencies_hz.is_empty());
         assert!(result.frequencies_hz[0].is_finite());
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0));
+        let total_classified = result
+            .classification
+            .vertical_bending
+            .len()
+            + result.classification.torsional.len()
+            + result.classification.lateral.len()
+            + result.classification.axial.len();
+        assert_eq!(total_classified, result.frequencies_hz.len());
     }
 
     #[test]
