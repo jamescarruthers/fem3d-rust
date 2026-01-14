@@ -25,11 +25,28 @@ pub struct Mesh {
 pub struct AssembledModel {
     pub stiffness: CsrMatrix<f64>,
     pub mass_diag: Vec<f64>,
+    pub dof_map: Vec<Option<usize>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModeSummary {
     pub frequencies_hz: Vec<f64>,
+    pub classification: ModeClassification,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct ModeClassification {
+    pub vertical_bending: Vec<ModeFamilyEntry>,
+    pub torsional: Vec<ModeFamilyEntry>,
+    pub lateral: Vec<ModeFamilyEntry>,
+    pub axial: Vec<ModeFamilyEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ModeFamilyEntry {
+    pub frequency_hz: f64,
+    pub mode_index: usize,
+    pub mode_number: Option<usize>,
 }
 
 impl Mesh {
@@ -142,7 +159,11 @@ pub fn assemble_model(mesh: &Mesh, material: &Material, fixed_nodes: &HashSet<us
 
     let stiffness = CsrMatrix::from(&coo);
 
-    AssembledModel { stiffness, mass_diag }
+    AssembledModel {
+        stiffness,
+        mass_diag,
+        dof_map,
+    }
 }
 
 fn element_stiffness(nodes: &[Point3<f64>; 4], material: &Material) -> (f64, DMatrix<f64>) {
@@ -183,6 +204,7 @@ fn element_stiffness(nodes: &[Point3<f64>; 4], material: &Material) -> (f64, DMa
         (inv[(1, 3)], inv[(2, 3)], inv[(3, 3)]),
     ];
 
+    // Strain order uses engineering shear: [exx, eyy, ezz, gxy, gyz, gxz].
     let mut b = DMatrix::<f64>::zeros(6, 12);
     for (i, (gx, gy, gz)) in grads.iter().enumerate() {
         let col = i * 3;
@@ -190,14 +212,14 @@ fn element_stiffness(nodes: &[Point3<f64>; 4], material: &Material) -> (f64, DMa
         b[(1, col + 1)] = *gy;
         b[(2, col + 2)] = *gz;
 
-        b[(3, col + 1)] = *gz;
-        b[(3, col + 2)] = *gy;
+        b[(3, col)] = *gy;
+        b[(3, col + 1)] = *gx;
 
-        b[(4, col)] = *gz;
-        b[(4, col + 2)] = *gx;
+        b[(4, col + 1)] = *gz;
+        b[(4, col + 2)] = *gy;
 
-        b[(5, col)] = *gy;
-        b[(5, col + 1)] = *gx;
+        b[(5, col)] = *gz;
+        b[(5, col + 2)] = *gx;
     }
 
     let d = constitutive_matrix(material);
@@ -256,13 +278,14 @@ fn constitutive_matrix(material: &Material) -> DMatrix<f64> {
     )
 }
 
-pub fn solve_modes(model: &AssembledModel, modes: usize) -> ModeSummary {
+pub fn solve_modes(model: &AssembledModel, mesh: &Mesh, modes: usize) -> ModeSummary {
     let op = MassScaledOperator::new(&model.stiffness, &model.mass_diag);
     let dim = op.ncols().max(1);
     let iterations = dim.min(dim.max(modes * 2 + 4));
     let eigen = op.eigsh(iterations, Order::Smallest);
 
     let mut frequencies_hz = Vec::new();
+    let mut mode_shapes = Vec::new();
     for lambda in eigen.eigenvalues.iter().copied() {
         if lambda <= RIGID_MODE_TOL {
             continue;
@@ -274,7 +297,23 @@ pub fn solve_modes(model: &AssembledModel, modes: usize) -> ModeSummary {
         frequencies_hz.push(freq);
     }
 
-    ModeSummary { frequencies_hz }
+    for (idx, lambda) in eigen.eigenvalues.iter().copied().enumerate() {
+        if mode_shapes.len() >= modes {
+            break;
+        }
+        if lambda <= RIGID_MODE_TOL {
+            continue;
+        }
+        let vec = eigen.eigenvectors.column(idx).into_owned();
+        mode_shapes.push(vec);
+    }
+
+    let classification = classify_modes(mesh, &model.dof_map, &frequencies_hz, &mode_shapes);
+
+    ModeSummary {
+        frequencies_hz,
+        classification,
+    }
 }
 
 pub fn demo_modes() -> ModeSummary {
@@ -293,7 +332,7 @@ pub fn demo_modes() -> ModeSummary {
     };
 
     let model = assemble_model(&mesh, &material, &fixed);
-    solve_modes(&model, 6)
+    solve_modes(&model, &mesh, 6)
 }
 
 #[wasm_bindgen]
@@ -342,7 +381,7 @@ pub fn compute_modes(
         return Err(JsValue::from_str("no free degrees of freedom after applying constraints"));
     }
 
-    let summary = solve_modes(&model, modes.max(1));
+    let summary = solve_modes(&model, &mesh, modes.max(1));
     serde_wasm_bindgen::to_value(&summary).map_err(to_js_error)
 }
 
@@ -392,6 +431,166 @@ impl<'a> Hermitian<f64> for MassScaledOperator<'a> {
     }
 }
 
+fn expand_mode_shape(
+    shape: &DVector<f64>,
+    dof_map: &[Option<usize>],
+    total_dofs: usize,
+) -> DVector<f64> {
+    let mut full = DVector::<f64>::zeros(total_dofs);
+    for (global_idx, mapped) in dof_map.iter().enumerate() {
+        if let Some(free_idx) = mapped {
+            if *free_idx < shape.len() {
+                full[global_idx] = shape[*free_idx];
+            }
+        }
+    }
+    full
+}
+
+fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
+    if nodes.is_empty() {
+        return None;
+    }
+
+    let tol = 1e-6;
+    let Some(x_min) = nodes
+        .iter()
+        .map(|p| p.x)
+        .min_by(|a, b| a.total_cmp(b))
+    else {
+        return None;
+    };
+    let end_nodes: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| (p.x - x_min).abs() < tol)
+        .map(|(i, _)| i)
+        .collect();
+
+    if end_nodes.is_empty() {
+        return None;
+    }
+
+    let Some(z_max) = end_nodes
+        .iter()
+        .map(|&i| nodes[i].z)
+        .max_by(|a, b| a.total_cmp(b))
+    else {
+        return None;
+    };
+    let top_nodes: Vec<usize> = end_nodes
+        .iter()
+        .copied()
+        .filter(|&i| (nodes[i].z - z_max).abs() < tol)
+        .collect();
+
+    if top_nodes.len() < 2 {
+        return None;
+    }
+
+    let s1 = *top_nodes
+        .iter()
+        .max_by(|a, b| {
+            nodes[**a].y.total_cmp(&nodes[**b].y)
+        })
+        .unwrap();
+    let s2 = *top_nodes
+        .iter()
+        .min_by(|a, b| {
+            nodes[**a].y.total_cmp(&nodes[**b].y)
+        })
+        .unwrap();
+
+    Some((s1, s2))
+}
+
+fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> Option<&'static str> {
+    let (s1, s2) = corners;
+    let idx1 = s1 * 3;
+    let idx2 = s2 * 3;
+
+    if idx1 + 2 >= mode_shape_full.len() || idx2 + 2 >= mode_shape_full.len() {
+        return None;
+    }
+
+    let psi_s1 = [mode_shape_full[idx1], mode_shape_full[idx1 + 1], mode_shape_full[idx1 + 2]];
+    let psi_s2 = [mode_shape_full[idx2], mode_shape_full[idx2 + 1], mode_shape_full[idx2 + 2]];
+
+    let abs_psi = [
+        psi_s1[0].abs(),
+        psi_s1[1].abs(),
+        psi_s1[2].abs(),
+    ];
+    let max_dir = abs_psi
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(i, _)| i)
+        .unwrap_or(2);
+
+    let kind = match max_dir {
+        1 => "lateral",
+        0 => "axial",
+        _ => {
+            if psi_s1[2].signum() == psi_s2[2].signum() {
+                "vertical_bending"
+            } else {
+                "torsional"
+            }
+        }
+    };
+
+    Some(kind)
+}
+
+fn classify_modes(
+    mesh: &Mesh,
+    dof_map: &[Option<usize>],
+    frequencies: &[f64],
+    shapes: &[DVector<f64>],
+) -> ModeClassification {
+    let mut classification = ModeClassification::default();
+    let Some(corners) = find_corner_nodes(&mesh.nodes) else {
+        return classification;
+    };
+
+    let total_dofs = mesh.nodes.len() * 3;
+    for (mode_index, (freq, shape_free)) in frequencies.iter().zip(shapes.iter()).enumerate() {
+        let shape_full = expand_mode_shape(shape_free, dof_map, total_dofs);
+        let Some(mode_type) = classify_mode(&shape_full, corners) else {
+            continue;
+        };
+        let entry = ModeFamilyEntry {
+            frequency_hz: *freq,
+            mode_index,
+            mode_number: None,
+        };
+
+        match mode_type {
+            "vertical_bending" => classification.vertical_bending.push(entry),
+            "torsional" => classification.torsional.push(entry),
+            "lateral" => classification.lateral.push(entry),
+            _ => classification.axial.push(entry),
+        }
+    }
+
+    for family in [
+        &mut classification.vertical_bending,
+        &mut classification.torsional,
+        &mut classification.lateral,
+        &mut classification.axial,
+    ] {
+        family.sort_by(|a, b| {
+            a.frequency_hz.total_cmp(&b.frequency_hz)
+        });
+        for (i, entry) in family.iter_mut().enumerate() {
+            entry.mode_number = Some(i + 1);
+        }
+    }
+
+    classification
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +601,64 @@ mod tests {
         assert!(!result.frequencies_hz.is_empty());
         assert!(result.frequencies_hz[0].is_finite());
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0));
+        let total_classified = result
+            .classification
+            .vertical_bending
+            .len()
+            + result.classification.torsional.len()
+            + result.classification.lateral.len()
+            + result.classification.axial.len();
+        assert_eq!(total_classified, result.frequencies_hz.len());
+    }
+
+    #[test]
+    fn element_stiffness_matches_constitutive_order() {
+        let material = Material {
+            young_modulus: 1.0,
+            poisson_ratio: 0.25,
+            density: 1.0,
+        };
+
+        let nodes = [
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+        ];
+
+        let grads = [
+            (-1.0, -1.0, -1.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ];
+
+        // Strain ordering (engineering shear γ = 2ε) matches [exx, eyy, ezz, gxy, gyz, gxz].
+        let mut expected_b = DMatrix::<f64>::zeros(6, 12);
+        for (i, (gx, gy, gz)) in grads.iter().copied().enumerate() {
+            let col = i * 3;
+            expected_b[(0, col)] = gx;
+            expected_b[(1, col + 1)] = gy;
+            expected_b[(2, col + 2)] = gz;
+            expected_b[(3, col)] = gy;
+            expected_b[(3, col + 1)] = gx;
+            expected_b[(4, col + 1)] = gz;
+            expected_b[(4, col + 2)] = gy;
+            expected_b[(5, col)] = gz;
+            expected_b[(5, col + 2)] = gx;
+        }
+
+        let expected_volume = 1.0 / 6.0;
+        let expected_ke = expected_b.transpose() * constitutive_matrix(&material) * expected_b * expected_volume;
+
+        let (volume, ke) = element_stiffness(&nodes, &material);
+        assert!((volume - expected_volume).abs() < 1e-12);
+
+        let max_err = ke
+            .iter()
+            .zip(expected_ke.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
+        assert!(max_err < 1e-10, "max_err was {}", max_err);
     }
 }
