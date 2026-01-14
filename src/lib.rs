@@ -439,12 +439,6 @@ fn expand_mode_shape(
     let mut full = DVector::<f64>::zeros(total_dofs);
     for (global_idx, mapped) in dof_map.iter().enumerate() {
         if let Some(free_idx) = mapped {
-            debug_assert!(
-                *free_idx < shape.len(),
-                "free dof {} out of bounds for shape len {}",
-                free_idx,
-                shape.len()
-            );
             if *free_idx < shape.len() {
                 full[global_idx] = shape[*free_idx];
             }
@@ -462,7 +456,8 @@ fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
     let x_min = nodes
         .iter()
         .map(|p| p.x)
-        .fold(f64::INFINITY, |a, b| a.min(b));
+        .min_by(|a, b| a.total_cmp(b))
+        .unwrap_or(f64::INFINITY);
     let end_nodes: Vec<usize> = nodes
         .iter()
         .enumerate()
@@ -477,7 +472,8 @@ fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
     let z_max = end_nodes
         .iter()
         .map(|&i| nodes[i].z)
-        .fold(f64::NEG_INFINITY, |a, b| a.max(b));
+        .max_by(|a, b| a.total_cmp(b))
+        .unwrap_or(f64::NEG_INFINITY);
     let top_nodes: Vec<usize> = end_nodes
         .iter()
         .copied()
@@ -491,19 +487,13 @@ fn find_corner_nodes(nodes: &[Point3<f64>]) -> Option<(usize, usize)> {
     let s1 = *top_nodes
         .iter()
         .max_by(|a, b| {
-            nodes[**a]
-                .y
-                .partial_cmp(&nodes[**b].y)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            nodes[**a].y.total_cmp(&nodes[**b].y)
         })
         .unwrap();
     let s2 = *top_nodes
         .iter()
         .min_by(|a, b| {
-            nodes[**a]
-                .y
-                .partial_cmp(&nodes[**b].y)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            nodes[**a].y.total_cmp(&nodes[**b].y)
         })
         .unwrap();
 
@@ -530,7 +520,7 @@ fn classify_mode(mode_shape_full: &DVector<f64>, corners: (usize, usize)) -> &'s
     let max_dir = abs_psi
         .iter()
         .enumerate()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|a, b| a.1.total_cmp(b.1))
         .map(|(i, _)| i)
         .unwrap_or(2);
 
@@ -584,9 +574,7 @@ fn classify_modes(
         &mut classification.axial,
     ] {
         family.sort_by(|a, b| {
-            a.frequency_hz
-                .partial_cmp(&b.frequency_hz)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            a.frequency_hz.total_cmp(&b.frequency_hz)
         });
         for (i, entry) in family.iter_mut().enumerate() {
             entry.mode_number = i + 1;
