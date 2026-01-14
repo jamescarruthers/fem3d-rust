@@ -911,4 +911,57 @@ mod tests {
         assert!(first_flexible_freq > 300.0, "First bending mode should be above 300 Hz");
         assert!(first_flexible_freq < 500.0, "First bending mode should be below 500 Hz");
     }
+
+    #[test]
+    fn sapele_bar_551x32x24_opposing_corners_constrained() {
+        // Sapele wood material properties
+        let material = Material {
+            young_modulus: 12.35e9,  // 12.35 GPa along grain
+            poisson_ratio: 0.35,
+            density: 665.0,          // kg/m³
+        };
+
+        // Bar dimensions: 551mm x 32mm x 24mm (converted to meters)
+        // Expected first bending frequency: ~350 Hz
+        let size = [0.551, 0.032, 0.024];
+
+        // TET10 mesh - scale divisions proportionally to length
+        let divisions = [22, 2, 2];
+        let mesh = Tet10Mesh::regular_box(divisions, size);
+
+        // Constrain opposing corners
+        let mut fixed = HashSet::new();
+        let tol = 1e-9;
+
+        for (idx, node) in mesh.nodes.iter().enumerate() {
+            if node.x.abs() < tol && node.y.abs() < tol && node.z.abs() < tol {
+                fixed.insert(idx);
+            }
+            if (node.x - size[0]).abs() < tol
+                && (node.y - size[1]).abs() < tol
+                && (node.z - size[2]).abs() < tol {
+                fixed.insert(idx);
+            }
+        }
+
+        assert_eq!(fixed.len(), 2, "Should have exactly 2 fixed nodes (opposing corners)");
+
+        let model = assemble_tet10_model(&mesh, &material, &fixed);
+        let result = solve_modes(&model, 6);
+
+        let first_flexible_freq = result.frequencies_hz.iter()
+            .find(|&&f| f > 10.0)
+            .copied()
+            .unwrap_or(0.0);
+
+        println!("Sapele bar 551x32x24mm with opposing corners constrained (TET10):");
+        println!("(Expected first bending: ~350 Hz)");
+        for (i, freq) in result.frequencies_hz.iter().enumerate() {
+            println!("  Mode {}: {:.2} Hz", i + 1, freq);
+        }
+
+        // First bending mode should be close to expected ~350 Hz
+        assert!(first_flexible_freq > 250.0, "First bending mode should be above 250 Hz");
+        assert!(first_flexible_freq < 450.0, "First bending mode should be below 450 Hz");
+    }
 }
