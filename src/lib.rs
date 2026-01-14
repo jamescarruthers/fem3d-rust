@@ -33,6 +33,62 @@ pub struct ModeSummary {
 }
 
 impl Mesh {
+    /// Creates a rectangular box mesh with specified divisions and dimensions along each axis.
+    pub fn regular_box(
+        divisions: [usize; 3],
+        size: [f64; 3],
+    ) -> Self {
+        assert!(divisions.iter().all(|&d| d > 0), "divisions must be at least 1");
+        let steps = [
+            size[0] / divisions[0] as f64,
+            size[1] / divisions[1] as f64,
+            size[2] / divisions[2] as f64,
+        ];
+        let nodes_per_axis = [divisions[0] + 1, divisions[1] + 1, divisions[2] + 1];
+
+        let mut nodes = Vec::with_capacity(nodes_per_axis[0] * nodes_per_axis[1] * nodes_per_axis[2]);
+        for k in 0..nodes_per_axis[2] {
+            for j in 0..nodes_per_axis[1] {
+                for i in 0..nodes_per_axis[0] {
+                    nodes.push(Point3::new(
+                        i as f64 * steps[0],
+                        j as f64 * steps[1],
+                        k as f64 * steps[2],
+                    ));
+                }
+            }
+        }
+
+        let mut elements = Vec::with_capacity(divisions[0] * divisions[1] * divisions[2] * 5);
+        let idx = |i: usize, j: usize, k: usize| -> usize {
+            (k * nodes_per_axis[1] * nodes_per_axis[0]) + (j * nodes_per_axis[0]) + i
+        };
+
+        for k in 0..divisions[2] {
+            for j in 0..divisions[1] {
+                for i in 0..divisions[0] {
+                    let n0 = idx(i, j, k);
+                    let n1 = idx(i + 1, j, k);
+                    let n2 = idx(i, j + 1, k);
+                    let n3 = idx(i + 1, j + 1, k);
+                    let n4 = idx(i, j, k + 1);
+                    let n5 = idx(i + 1, j, k + 1);
+                    let n6 = idx(i, j + 1, k + 1);
+                    let n7 = idx(i + 1, j + 1, k + 1);
+
+                    // Five-tetra subdivision of a hexahedron
+                    elements.push([n0, n1, n3, n7]);
+                    elements.push([n0, n3, n2, n7]);
+                    elements.push([n0, n2, n6, n7]);
+                    elements.push([n0, n6, n4, n7]);
+                    elements.push([n0, n4, n5, n7]);
+                }
+            }
+        }
+
+        Self { nodes, elements }
+    }
+
     pub fn regular_cube(divisions: usize, size: f64) -> Self {
         assert!(divisions > 0, "divisions must be at least 1");
         let step = size / divisions as f64;
@@ -402,5 +458,42 @@ mod tests {
         assert!(!result.frequencies_hz.is_empty());
         assert!(result.frequencies_hz[0].is_finite());
         assert!(result.frequencies_hz.iter().all(|f| *f > 0.0));
+    }
+
+    #[test]
+    fn sapele_bar_450x32x24_free_free_modes() {
+        // Sapele wood material properties
+        let material = Material {
+            young_modulus: 10.5e9,  // ~10.5 GPa along grain
+            poisson_ratio: 0.35,
+            density: 640.0,         // kg/m³
+        };
+
+        // Bar dimensions: 450mm x 32mm x 24mm (converted to meters)
+        // X = length (450mm), Y = width (32mm), Z = thickness (24mm)
+        let size = [0.450, 0.032, 0.024];
+
+        // Use more divisions along length for accuracy
+        let divisions = [18, 2, 2];
+
+        let mesh = Mesh::regular_box(divisions, size);
+
+        // Free-free boundary conditions (no fixed nodes)
+        let fixed = HashSet::new();
+
+        let model = assemble_model(&mesh, &material, &fixed);
+        let result = solve_modes(&model, 6);
+
+        // Free-free bar should have 6 rigid body modes filtered out,
+        // then flexible modes starting with bending modes
+        assert!(!result.frequencies_hz.is_empty(), "Should have flexible modes");
+        assert!(result.frequencies_hz.iter().all(|f| f.is_finite()), "All frequencies should be finite");
+        assert!(result.frequencies_hz.iter().all(|f| *f > 0.0), "All frequencies should be positive");
+
+        // Print frequencies for debugging/verification
+        println!("Sapele bar 450x32x24mm free-free mode frequencies:");
+        for (i, freq) in result.frequencies_hz.iter().enumerate() {
+            println!("  Mode {}: {:.2} Hz", i + 1, freq);
+        }
     }
 }
