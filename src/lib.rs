@@ -93,6 +93,67 @@ impl Mesh {
 
         Self { nodes, elements }
     }
+
+    pub fn regular_bar(
+        divisions_x: usize,
+        divisions_y: usize,
+        divisions_z: usize,
+        length: f64,
+        width: f64,
+        height: f64,
+    ) -> Self {
+        assert!(divisions_x > 0 && divisions_y > 0 && divisions_z > 0, "divisions must be at least 1");
+        
+        let step_x = length / divisions_x as f64;
+        let step_y = width / divisions_y as f64;
+        let step_z = height / divisions_z as f64;
+        
+        let nx = divisions_x + 1;
+        let ny = divisions_y + 1;
+        let nz = divisions_z + 1;
+
+        let mut nodes = Vec::with_capacity(nx * ny * nz);
+        for k in 0..=divisions_z {
+            for j in 0..=divisions_y {
+                for i in 0..=divisions_x {
+                    nodes.push(Point3::new(
+                        i as f64 * step_x,
+                        j as f64 * step_y,
+                        k as f64 * step_z,
+                    ));
+                }
+            }
+        }
+
+        let mut elements = Vec::with_capacity(divisions_x * divisions_y * divisions_z * 5);
+        let idx = |i: usize, j: usize, k: usize| -> usize {
+            (k * nx * ny) + (j * nx) + i
+        };
+
+        for k in 0..divisions_z {
+            for j in 0..divisions_y {
+                for i in 0..divisions_x {
+                    let n0 = idx(i, j, k);
+                    let n1 = idx(i + 1, j, k);
+                    let n2 = idx(i, j + 1, k);
+                    let n3 = idx(i + 1, j + 1, k);
+                    let n4 = idx(i, j, k + 1);
+                    let n5 = idx(i + 1, j, k + 1);
+                    let n6 = idx(i, j + 1, k + 1);
+                    let n7 = idx(i + 1, j + 1, k + 1);
+
+                    // Five-tetra subdivision of a cube
+                    elements.push([n0, n1, n3, n7]);
+                    elements.push([n0, n3, n2, n7]);
+                    elements.push([n0, n2, n6, n7]);
+                    elements.push([n0, n6, n4, n7]);
+                    elements.push([n0, n4, n5, n7]);
+                }
+            }
+        }
+
+        Self { nodes, elements }
+    }
 }
 
 pub fn assemble_model(mesh: &Mesh, material: &Material, fixed_nodes: &HashSet<usize>) -> AssembledModel {
@@ -660,5 +721,58 @@ mod tests {
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f64, f64::max);
         assert!(max_err < 1e-10, "max_err was {}", max_err);
+    }
+
+    #[test]
+    fn sapele_wood_bar_450x32x24() {
+        // Create a mesh for a sapele wood bar with dimensions 450x32x24 mm (0.45x0.032x0.024 m)
+        // Using moderate mesh resolution for reasonable computation time
+        const LENGTH: f64 = 0.45; // length in meters
+        const WIDTH: f64 = 0.032;  // width in meters
+        const HEIGHT: f64 = 0.024; // height in meters
+        
+        let mesh = Mesh::regular_bar(
+            18,  // divisions along length (450mm)
+            3,   // divisions along width (32mm)
+            2,   // divisions along height (24mm)
+            LENGTH,
+            WIDTH,
+            HEIGHT,
+        );
+
+        // Fix both ends of the bar (fixed-fixed boundary condition)
+        // Fix all nodes where x is approximately 0 or x is approximately the length (both ends)
+        // Note: This fixes all DOFs (translation and rotation) at both ends
+        let mut fixed = HashSet::new();
+        for (idx, node) in mesh.nodes.iter().enumerate() {
+            if node.x <= f64::EPSILON || (node.x - LENGTH).abs() <= f64::EPSILON {
+                fixed.insert(idx);
+            }
+        }
+
+        // Sapele wood material properties
+        // Young's modulus: ~12 GPa (typical for sapele)
+        // Poisson's ratio: ~0.37 (typical for hardwoods)
+        // Density: ~670 kg/m³ (typical for sapele)
+        let material = Material {
+            young_modulus: 12e9,    // 12 GPa in Pa
+            poisson_ratio: 0.37,
+            density: 670.0,         // kg/m³
+        };
+
+        // Assemble and solve for the first 6 modes
+        let model = assemble_model(&mesh, &material, &fixed);
+        let result = solve_modes(&model, 6);
+
+        // Verify the results are valid
+        assert!(!result.frequencies_hz.is_empty(), "Should have at least one mode");
+        assert!(result.frequencies_hz[0].is_finite(), "First frequency should be finite");
+        assert!(result.frequencies_hz.iter().all(|f| *f > 0.0), "All frequencies should be positive");
+        
+        // Print the frequencies for reference
+        println!("Sapele wood bar (450x32x24 mm) modal frequencies (fixed at both ends):");
+        for (i, freq) in result.frequencies_hz.iter().enumerate() {
+            println!("  Mode {}: {:.2} Hz", i + 1, freq);
+        }
     }
 }
